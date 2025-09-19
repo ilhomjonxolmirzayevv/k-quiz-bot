@@ -373,6 +373,7 @@
 const Bot = require("node-telegram-bot-api");
 const mongoose = require("mongoose");
 require("dotenv").config();
+const express = require("express");
 
 const TEACHERS = [1228723117, 7921850499]; // O‘qituvchilar ID
 
@@ -388,6 +389,7 @@ const Word = mongoose.model("Word", wordSchema);
 
 const userSessions = {}; // Foydalanuvchi sessiyalari
 
+// 🔹 MongoDB ulanishi
 mongoose
     .connect(process.env.MONGO_URI)
     .then(() => {
@@ -412,7 +414,7 @@ function startBot() {
         };
     }
 
-    // START
+    // 🔹 START komandasi
     bot.onText(/^\/start$/, async (msg) => {
         const name = msg.from.first_name || msg.from.username || "O‘quvchi";
         const menu = await getMainMenu(msg.chat.id);
@@ -424,7 +426,7 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
         );
     });
 
-    // ➕ So‘z qo‘shish
+    // 🔹 So‘z qo‘shish
     bot.onText(/➕ So‘z qo‘shish/, (msg) => {
         userSessions[msg.chat.id] = { waitingLesson: true };
         bot.sendMessage(
@@ -434,7 +436,7 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
         );
     });
 
-    // 📄 Mening so‘zlarim
+    // 🔹 Mening so‘zlarim
     bot.onText(/📄 Mening so‘zlarim/, async (msg) => {
         const words = await Word.find({ chatId: msg.chat.id }).sort("lesson");
         if (!words.length)
@@ -453,7 +455,7 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
         bot.sendMessage(msg.chat.id, text);
     });
 
-    // 📚 Testni boshlash
+    // 🔹 Testni boshlash
     bot.onText(/📚 Testni boshlash/, async (msg) => {
         const chatId = msg.chat.id;
         const words = await Word.find({ chatId });
@@ -475,7 +477,7 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
         });
     });
 
-    // Message handler
+    // 🔹 Message handler
     bot.on("message", async (msg) => {
         const chatId = msg.chat.id;
         const text = msg.text?.trim();
@@ -557,8 +559,8 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
             session.words = words.sort(() => Math.random() - 0.5);
             session.index = 0;
             session.correct = 0;
-            session.mistakes = []; // ❌ noto‘g‘ri javoblar
-            session.correctAnswers = []; // ✅ to‘g‘ri javoblar
+            session.mistakes = [];
+            session.correctAnswers = [];
             session.step = "inTest";
             session.endTime = Date.now() + 3 * 60 * 1000;
             bot.sendMessage(chatId, "🚀 Test boshlandi! (3 daqiqa vaqt) ⏳");
@@ -592,7 +594,7 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
         }
     });
 
-    // 🔹 Savol berish
+    // 🔹 Savol berish funksiyasi
     async function askQuestion(chatId, bot) {
         const session = userSessions[chatId];
         if (
@@ -628,7 +630,7 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
         }, 3 * 60 * 1000);
     }
 
-    // 🔹 Inline tugmalar
+    // 🔹 Inline tugmalar handler
     bot.on("callback_query", async (query) => {
         const chatId = query.message.chat.id;
         const data = query.data;
@@ -663,7 +665,7 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
         bot.answerCallbackQuery(query.id);
     });
 
-    // 🔹 Testni tugatish
+    // 🔹 Testni tugatish funksiyasi
     async function finishTest(chatId, bot) {
         const session = userSessions[chatId];
         if (!session) return;
@@ -703,3 +705,12 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
     }
 }
 
+// 🔹 Minimal HTTP server (Koyeb health check uchun)
+const app = express();
+const PORT = process.env.PORT || 8000;
+
+app.get("/", (req, res) => {
+    res.send("✅ Bot ishlayapti");
+});
+
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
