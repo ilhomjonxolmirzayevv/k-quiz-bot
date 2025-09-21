@@ -377,7 +377,7 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
     cron.schedule("0 20 * * *", async () => {
         const users = await Word.distinct("chatId");
         for (let id of users) {
-            bot.sendMessage(id, "🌙 Kechqurun eslatma: 📚 Bugun o‘rgangan so‘zlaringizni qaytarib chiqing!");
+            bot.sendMessage(id, "🌙 Kechqurungi eslatma: 📚 Bugun o‘rgangan so‘zlaringizni qaytarib chiqing!");
         }
     });
 }
