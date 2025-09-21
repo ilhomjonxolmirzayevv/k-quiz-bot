@@ -1,6 +1,7 @@
 const Bot = require("node-telegram-bot-api");
 const mongoose = require("mongoose");
 const cron = require("node-cron");
+const express = require("express");
 require("dotenv").config();
 
 const TEACHERS = [1228723117, 7921850499]; // O‘qituvchilar ID
@@ -63,7 +64,7 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
         );
     });
 
-    // 📄 Mening so‘zlarim (inline tugmalar bilan)
+    // 📄 Mening so‘zlarim
     bot.onText(/📄 Mening so‘zlarim/, async (msg) => {
         const words = await Word.find({ chatId: msg.chat.id }).sort("lesson");
         if (!words.length)
@@ -206,6 +207,7 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
             session.correctAnswers = [];
             session.step = "inTest";
             session.endTime = Date.now() + 3 * 60 * 1000;
+            session.paused = false;
             bot.sendMessage(chatId, "🚀 Test boshlandi! (3 daqiqa vaqt) ⏳");
             return askQuestion(chatId, bot);
         }
@@ -318,7 +320,8 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
         // ✏️ Tahrirlash
         if (data.startsWith("edit_")) {
             const id = data.split("_")[1];
-            userSessions[chatId] = { editing: id };
+            if (!userSessions[chatId]) userSessions[chatId] = {};
+            userSessions[chatId].editing = id;
             bot.sendMessage(chatId, "✏️ Yangi ko‘rinishda kiriting:\n`apple - olma`", {
                 parse_mode: "Markdown",
             });
@@ -366,19 +369,24 @@ Bu bot orqali inglizcha so‘zlarni o‘rganamiz.`,
         delete userSessions[chatId];
     }
 
-    // 🔔 Reminderlar
+    // 🔔 Reminderlar (O‘zbekiston vaqti bo‘yicha)
     cron.schedule("0 8 * * *", async () => {
         const users = await Word.distinct("chatId");
         for (let id of users) {
             bot.sendMessage(id, "🌅 Ertalabki salom! 📖 So‘zlarni takrorlashni unutmang!");
         }
-    });
+    }, { timezone: "Asia/Tashkent" });
 
     cron.schedule("0 20 * * *", async () => {
         const users = await Word.distinct("chatId");
         for (let id of users) {
             bot.sendMessage(id, "🌙 Kechqurungi eslatma: 📚 Bugun o‘rgangan so‘zlaringizni qaytarib chiqing!");
         }
-    });
+    }, { timezone: "Asia/Tashkent" });
 }
 
+// 🌐 Express server (Koyeb health check uchun)
+const app = express();
+app.get("/", (req, res) => res.send("Bot is running! ✅"));
+const PORT = process.env.PORT || 8000;
+app.listen(PORT, () => console.log(`🌐 Express server running on port ${PORT}`));
