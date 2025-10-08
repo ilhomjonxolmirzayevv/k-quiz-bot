@@ -126,7 +126,7 @@ function startBot() {
     let lessons = await Word.distinct("lesson", { chatId });
     lessons.sort((a, b) => a - b);
 
-    // 1 qatorda 4 ta tugma
+    // 1 qatorda 3 ta tugma
     const keyboard = [];
     for (let i = 0; i < lessons.length; i += 3) {
       keyboard.push(lessons.slice(i, i + 3).map(l => `📘 ${l}-dars`));
@@ -169,6 +169,62 @@ function startBot() {
     if (!userSessions[chatId]) userSessions[chatId] = {};
     userSessions[chatId].userName = msg.from.first_name || msg.from.username || "Noma'lum";
     const session = userSessions[chatId];
+
+    // ==== Tahrirlash uchun yangi handler (asosiy qo'shilgan qism) ====
+    // Agar foydalanuvchi tahrirlash rejimida bo'lsa:
+    if (session?.editing) {
+      const editInfo = session.editing; // { id, original }
+      // Bekor qilish uchun:
+      if (text.toLowerCase() === "bekor" || text.toLowerCase() === "cancel") {
+        delete session.editing;
+        return bot.sendMessage(chatId, "✖️ Tahrirlash bekor qilindi.");
+      }
+
+      // Qabul qilish formatlari:
+      // 1) "apple - olma"
+      // 2) "2 | apple - olma"  (darsni ham oʻzgartirish)
+      try {
+        let lesson = undefined;
+        let rest = text;
+
+        if (text.includes("|")) {
+          const parts = text.split("|");
+          const maybeLesson = parts.shift().trim();
+          rest = parts.join("|").trim();
+          if (/^\d+$/.test(maybeLesson)) lesson = parseInt(maybeLesson, 10);
+        }
+
+        // rest ichida en va uz bo'lishi kerak, '-' bilan ajratilgan
+        const parts = rest.split(/[-—–]/);
+        if (parts.length < 2) {
+          return bot.sendMessage(chatId, "❗ Format noto'g'ri. Iltimos quyidagi formatlardan birida yuboring:\n`apple - olma`\nyoki `2 | apple - olma`\nBekor qilish uchun `bekor` yozing.", { parse_mode: "Markdown" });
+        }
+        const en = parts.shift().trim();
+        const uz = parts.join("-").trim(); // qolganlarini qayta qo'shamiz (masalan uz ichida '-')
+        if (!en || !uz) {
+          return bot.sendMessage(chatId, "❗ Inglizcha yoki o'zbekcha qism topilmadi. Iltimos tekshirib qaytadan yuboring.");
+        }
+
+        // Yangilash
+        const update = { en, uz };
+        if (lesson !== undefined) update.lesson = lesson;
+
+        const updated = await Word.findByIdAndUpdate(editInfo.id, update, { new: true });
+        if (!updated) {
+          delete session.editing;
+          return bot.sendMessage(chatId, "❌ So'z topilmadi yoki allaqachon o'chirilgan.");
+        }
+
+        delete session.editing;
+        await bot.sendMessage(chatId, `✅ So‘z yangilandi:\n📘 ${updated.lesson}-dars\n${updated.en} — ${updated.uz}`);
+        return;
+      } catch (e) {
+        console.error("Tahrirlash xatosi:", e);
+        delete session.editing;
+        return bot.sendMessage(chatId, "❌ Tahrirlashda xatolik yuz berdi. Iltimos qayta urinib ko'ring.");
+      }
+    }
+    // ==== /Tahrirlash handler tugadi ====
 
     // So'z qo'shish
     if (session?.waitingLesson && /^\d+$/.test(text)) {
@@ -278,6 +334,185 @@ function startBot() {
   // Callback query va pauza/resume/stops...
   bot.on("callback_query", async (query) => {
     const chatId = query.message.chat.id;
+    const data = query.data;
+    if (!userSessions[chatId]) userSessions[chatId] = {};
+    const session = userSessions[chatId];
+
+    if (data === "pause" && session.step === "inTest") {
+      if (session.waitTimer) clearTimeout(session.waitTimer);
+      session.paused = true;
+      session.pauseStartedAt = Date.now();
+      await bot.sendMessage(chatId, "⏸ Test pauzaga qo‘yildi.", {
+        reply_markup: { inline_keyboard: [[{ text: "▶️ Davom ettirish", callback_data: "resume" }]] },
+      });
+      return bot.answerCallbackQuery(query.id);
+    }
+
+    if (data === "resume" && session.paused) {
+      if (session.testDuration !== Infinity && session.pauseStartedAt) {
+        const pausedFor = Date.now() - session.pauseStartedAt;
+        session.endTime += pausedFor;
+        session.pauseStartedAt = null;
+      }
+      session.paused = false;
+      await bot.sendMessage(chatId, "▶️ Test davom etmoqda...");
+      return sendCurrentQuestion(chatId, bot);
+    }
+
+    if (data === "stop") {
+      if (session.waitTimer) clearTimeout(session.waitTimer);
+      const menu = await getMainMenu(chatId);
+      bot.sendMessage(chatId, "⏹ Test to‘xtatildi.", menu);
+      delete userSessions[chatId];
+      return bot.answerCallbackQuery(query.id);
+    }
+
+    if (data.startsWith("delete_")) {
+      const id = data.split("_")[1];
+      await Word.findByIdAndDelete(id);
+      try {
+        await bot.editMessageText("🗑 So‘z o‘chirildi!", { chat_id: chatId, message_id: query.message.message_id });
+      } catch (e) { }
+      return bot.answerCallbackQuery(query.id, { text: "So‘z o‘chirildi" });
+    }
+
+    // ====== Edit tugmasi bosilganda hozirgi so'zni olib, sessiyaga yozamiz ======
+    if (data.startsWith("edit_")) {
+      const id = data.split("_")[1];
+      try {
+        const w = await Word.findById(id);
+        if (!w) {
+          await bot.answerCallbackQuery(query.id, { text: "So'z topilmadi" });
+          return;
+        }
+
+        // Sessiyaga editing ma'lumotini saqlaymiz
+        userSessions[chatId].editing = { id: w._id.toString(), original: { lesson: w.lesson, en: w.en, uz: w.uz } };
+
+        // Foydalanuvchiga yo'riqnoma yuboramiz
+        const help = "✏️ Tahrirlash rejimi:\nSo‘zni yangi formatda yuboring:\n`apple - olma`\nAgar dars raqamini ham oʻzgartirmoqchi bo‘lsangiz shu formatni ishlating:\n`2 | apple - olma`\nBekor qilish uchun `bekor` yozing.";
+        await bot.sendMessage(chatId, `🔎 Hozirgi: 📘 ${w.lesson}-dars\n${w.en} — ${w.uz}\n\n${help}`, { parse_mode: "Markdown" });
+        return bot.answerCallbackQuery(query.id);
+      } catch (e) {
+        console.error("Edit callback xatosi:", e);
+        await bot.answerCallbackQuery(query.id, { text: "Xatolik yuz berdi" });
+        return;
+      }
+    }
+
+    if (data === "toggle_reminder") {
+      const s = (await UserSettings.findOne({ chatId })) || (await UserSettings.create({ chatId }));
+      s.remindersEnabled = !s.remindersEnabled;
+      await s.save();
+      await bot.editMessageText(`⚙️ Sozlamalar:\nEslatmalar: ${s.remindersEnabled ? '✅' : '❌'}`, { chat_id: chatId, message_id: query.message.message_id });
+      return bot.answerCallbackQuery(query.id);
+    }
+
+    if (data.startsWith("toggle_teacher_")) {
+      const teacherId = parseInt(data.split("_")[2]);
+      const t = (await TeacherSettings.findOne({ teacherId })) || (await TeacherSettings.create({ teacherId: teacherId }));
+      t.receiveResults = !t.receiveResults;
+      await t.save();
+      await bot.editMessageText(`⚙️ Sozlamalar:\nNatijalarni qabul qilish: ${t.receiveResults ? '✅' : '❌'}`, { chat_id: chatId, message_id: query.message.message_id });
+      return bot.answerCallbackQuery(query.id);
+    }
+
+    bot.answerCallbackQuery(query.id);
+  });
+
+  async function sendCurrentQuestion(chatId, bot) {
+    const session = userSessions[chatId];
+    if (!session) return;
+
+    if (session.testDuration !== Infinity && Date.now() > session.endTime) return finishTest(chatId, bot);
+    if (session.index >= session.words.length) return finishTest(chatId, bot);
+
+    session.currentWord = session.words[session.index];
+
+    const q = session.mode === "en-uz" 
+      ? `❓ *${session.currentWord.en}* — o‘zbekchasini yozing` 
+      : `❓ *${session.currentWord.uz}* — inglizchasini yozing`;
+
+    const inline = [[{ text: "⏸ Pauza", callback_data: "pause" }, { text: "⏹ To‘xtatish", callback_data: "stop" }]];
+
+    await bot.sendMessage(chatId, q, { parse_mode: "Markdown", reply_markup: { inline_keyboard: inline } });
+
+    if (session.waitTimer) clearTimeout(session.waitTimer);
+    session.waitTimer = setTimeout(() => {
+      if (session.paused) return;
+      if (session.testDuration !== Infinity && Date.now() > session.endTime) return finishTest(chatId, bot);
+
+      session.mistakes.push(`❌ ${session.currentWord.en} — ${session.currentWord.uz} (javob berilmadi)`);
+      session.index += 1;
+      bot.sendMessage(chatId, "⏰ Javob yo‘q, keyingi savolga o‘tilmoqda.");
+      return sendCurrentQuestion(chatId, bot);
+    }, 60 * 1000);
+  }
+
+  async function finishTest(chatId, bot) {
+    const session = userSessions[chatId];
+    if (!session) return;
+
+    if (session.waitTimer) clearTimeout(session.waitTimer);
+
+    const total = session.words.length;
+    const correct = session.correct || 0;
+    const percent = total === 0 ? 0 : ((correct / total) * 100).toFixed(1);
+
+    // ⬅️ Test davomiyligini hisoblash
+    let timeTakenText = "";
+    if (session.testStartTime) {
+      const timeTakenMs = Date.now() - session.testStartTime;
+      const minutes = Math.floor(timeTakenMs / 60000);
+      const seconds = Math.floor((timeTakenMs % 60000) / 1000);
+      timeTakenText = `\n⏱ Test davomiyligi: ${minutes} min ${seconds} sek`;
+    }
+
+    const mistakes = session.mistakes.length > 0 ? `\n❌ Xatolar:\n${session.mistakes.join("\n")}` : "\n✅ Hech qanday xato yo‘q!";
+    const correctList = session.correctAnswers.length > 0 ? `\n✔️ To‘g‘ri javoblar:\n${session.correctAnswers.join("\n")}` : "";
+    const menu = await getMainMenu(chatId);
+
+    await bot.sendMessage(
+      chatId,
+      `📊 *Test tugadi!*\n✅ To‘g‘ri: ${correct}/${total}\n📈 Foiz: ${percent}%${timeTakenText}${mistakes}${correctList}`,
+      { parse_mode: "Markdown", ...menu }
+    );
+
+    for (let t of TEACHERS) {
+      const ts = (await TeacherSettings.findOne({ teacherId: t })) || (await TeacherSettings.create({ teacherId: t }));
+      if (!ts.receiveResults) continue;
+
+      await bot.sendMessage(
+        t,
+        `👨‍🎓 O‘quvchi: *${session.userName || "Noma'lum"}*\n🆔 ID: ${chatId}\n📊 Natija: ${correct}/${total} (${percent}%)${timeTakenText}${mistakes}${correctList}`,
+        { parse_mode: "Markdown" }
+      );
+    }
+
+    delete userSessions[chatId];
+  }
+
+  // Reminder cronlar
+  cron.schedule("0 7 * * *", async () => {
+    const users = await UserSettings.find({ remindersEnabled: true }).select("chatId -_id");
+    const ids = users.map((u) => u.chatId);
+    if (!ids.length) {
+      const all = await Word.distinct("chatId");
+      for (let id of all) await bot.sendMessage(id, "🌅 Ertalabki salom! 📖 So‘zlarni takrorlashni unutmang!");
+      return;
+    }
+    for (let id of ids) {
+      const cnt = await Word.countDocuments({ chatId: id });
+      if (cnt > 0) await bot.sendMessage(id, "🌅 Ertalabki salom! 📖 So‘zlarni takrorlashni unutmang!");
+    }
+  }, { timezone: "Asia/Tashkent" });
+
+  cron.schedule("0 20 * * *", async () => {
+    const users = await UserSettings.find({ remindersEnabled: true }).select("chatId -_id");
+    const ids = users.map((u) => u.chatId);
+    if (!ids.length) {
+      const all = await Word.distinct("chatId");
+atId = query.message.chat.id;
     const data = query.data;
     if (!userSessions[chatId]) userSessions[chatId] = {};
     const session = userSessions[chatId];
