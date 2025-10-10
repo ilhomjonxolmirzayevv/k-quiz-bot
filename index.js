@@ -436,7 +436,7 @@ function startBot() {
       const activeMs = totalMs - pausedMs;
       const minutes = Math.floor(activeMs / 60000);
       const seconds = Math.floor((activeMs % 60000) / 1000);
-      timeTakenText = `\n⏱ Test davomiyligi (faqat faol vaqt): ${minutes} min ${seconds} sek`;
+      timeTakenText = `\n⏱ Test davomiyligi: ${minutes} min ${seconds} sek`;
     }
 
     const mistakes = session.mistakes.length > 0 ? `\n❌ Xatolar:\n${session.mistakes.join("\n")}` : "\n✅ Hech qanday xato yo‘q!";
