@@ -1,6 +1,6 @@
 # K-Quiz Bot
 
-K-Quiz — bu Telegram orqali foydalanuvchilarga koreys tilidagi so‘zlarni o‘rganish va test orqali bilimlarini sinash imkonini beruvchi interaktiv bot.
+K-Quiz — bu Telegram orqali foydalanuvchilarga ingliz tilidagi so‘zlarni o‘rganish va test orqali bilimlarini sinash imkonini beruvchi interaktiv bot.
 
 ## Xususiyatlar
 - 📚 **So‘z qo‘shish** — foydalanuvchi o‘z lug‘atiga yangi so‘zlarni qo‘shishi mumkin.
